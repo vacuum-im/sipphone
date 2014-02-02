@@ -6,7 +6,6 @@
 #include <interfaces/ipluginmanager.h>
 #include <interfaces/isipphone.h>
 #include "sipcall.h"
-#include "renderdev.h"
 #include "sipworker.h"
 
 class SipPhone : 
@@ -70,7 +69,7 @@ protected:
 	void initSipStack();
 	void loadSipParams();
 	void destroySipStack();
-	QString resolveSipError(int ACode);
+	QString resolveSipError(int ACode) const;
 	bool isValidConfig(const ISipAccountConfig &AConfig) const;
 	bool parseConfig(const ISipAccountConfig &ASrc, pjsua_acc_config &ADst) const;
 	bool parseSipUri(const QString &AUri, QString &AAddress, quint16 &APort) const;

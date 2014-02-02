@@ -3,6 +3,8 @@
 #include <QTimer>
 #include <QMetaType>
 #include <QDateTime>
+#include <definitions/sipphone/statisticsparams.h>
+#include <utils/logger.h>
 
 #define CLOSE_MEDIA_DELAY  3000
 
@@ -50,7 +52,6 @@ SipCall::~SipCall()
 	pjmedia_port_destroy(FTonegenPort);
 	pj_pool_release(FTonegenPool);
 
-	PJ_LOG(4,(__FILE__,"Call destroyed, remoteUri=%s, acc=%d",FRemoteUri.toLocal8Bit().constData(),FAccIndex));
 	emit callDestroyed();
 }
 
@@ -113,19 +114,28 @@ bool SipCall::sendDtmf(const char *ADigits)
 			digits[i].volume = 0;
 		}
 
-		if (pjmedia_tonegen_play_digits(FTonegenPort,count,digits,0) == PJ_SUCCESS)
+		pj_status_t status = pjmedia_tonegen_play_digits(FTonegenPort,count,digits,0);
+		if (status == PJ_SUCCESS)
 		{
+			LOG_DEBUG(QString("DTMF digits sent '%1', call=%2, uri=%3").arg(ADigits).arg(FCallIndex).arg(FRemoteUri));
 			emit dtmfSent(ADigits);
 			return true;
 		}
+		else
+		{
+			LOG_ERROR(QString("Failed to send DTMF digits '%1', call=%2, uri=%3: %4").arg(ADigits).arg(FCallIndex).arg(FRemoteUri).arg(resolveSipError(status)));
+		}
 	}
+	else
+	{
+		LOG_ERROR(QString("Failed to send DTMF digits '%1', call=%2, uri=%3: Call is not active").arg(ADigits).arg(FCallIndex).arg(FRemoteUri));
+	}
+
 	return false;
 }
 
 bool SipCall::startCall(bool AWithVideo)
 {
-	PJ_LOG(4,(__FILE__,"Starting call, video=%d, remoteUri=%s, acc=%d, call=%d",AWithVideo,FRemoteUri.toLocal8Bit().constData(),FAccIndex,FCallIndex));
-
 	if (FRole==Caller && FState==Inited)
 	{
 		pjsua_call_setting cs;
@@ -136,9 +146,15 @@ bool SipCall::startCall(bool AWithVideo)
 		pj_str_t uri = pj_str(uri8bit.data());
 		pj_status_t status = pjsua_call_make_call(FAccIndex,&uri,&cs,NULL,NULL,&FCallIndex);
 		if (status == PJ_SUCCESS)
+		{
+			LOG_INFO(QString("Making outgoing SIP call, call=%1, uri=%2, video=%3").arg(FCallIndex).arg(FRemoteUri).arg(AWithVideo));
 			return true;
+		}
 		else
+		{
+			LOG_ERROR(QString("Failed to make outgoing SIP call, call=%1, uri=%2, video=%3: %4").arg(FCallIndex).arg(FRemoteUri).arg(AWithVideo).arg(resolveSipError(status)));
 			setError(status);
+		}
 	}
 	else if (FRole==Receiver && FState==Ringing)
 	{
@@ -148,9 +164,19 @@ bool SipCall::startCall(bool AWithVideo)
 
 		pj_status_t status = pjsua_call_answer2(FCallIndex,&cs,PJSIP_SC_OK,NULL,NULL);
 		if (status == PJ_SUCCESS)
+		{
+			LOG_INFO(QString("Accepting incoming SIP call, call=%1, uri=%2, video=%3").arg(FCallIndex).arg(FRemoteUri).arg(AWithVideo));
 			return true;
+		}
 		else
+		{
+			LOG_ERROR(QString("Failed to accept incoming SIP call, call=%1, uri=%2, video=%3: %4").arg(FCallIndex).arg(FRemoteUri).arg(AWithVideo).arg(resolveSipError(status)));
 			setError(status);
+		}
+	}
+	else
+	{
+		REPORT_ERROR("Failed to start SIP call: Invalid call state");
 	}
 	return false;
 }
@@ -159,23 +185,25 @@ bool SipCall::hangupCall(quint32 AStatusCode, const QString &AText)
 {
 	if (isActive())
 	{
-		PJ_LOG(4,(__FILE__,"Hanging up call, code=%d, remoteUri=%s, acc=%d, call=%d",AStatusCode,FRemoteUri.toLocal8Bit().constData(),FAccIndex,FCallIndex));
-
 		QByteArray reason = AText.toLocal8Bit();
 		pj_str_t pj_reason = pj_str(reason.data());
 		pj_status_t status = pjsua_call_hangup(FCallIndex,AStatusCode,&pj_reason,NULL);
 		if (status == PJ_SUCCESS)
+		{
+			LOG_INFO(QString("Hanging up SIP call, code=%1, call=%2, uri=%3").arg(AStatusCode).arg(FCallIndex).arg(FRemoteUri));
 			return true;
+		}
 		else
+		{
+			LOG_ERROR(QString("Failed to hangup SIP call, code=%1, call=%2, uri=%3: %4").arg(AStatusCode).arg(FCallIndex).arg(FRemoteUri).arg(resolveSipError(status)));
 			setError(status);
+		}
 	}
 	return false;
 }
 
 bool SipCall::destroyCall(unsigned long AWaitForDisconnected)
 {
-	PJ_LOG(4,(__FILE__,"Destroying call, remoteUri=%s, acc=%d, call=%d",FRemoteUri.toLocal8Bit().constData(),FAccIndex,FCallIndex));
-
 	if (hangupCall(ISipCall::SC_Decline))
 	{
 		unsigned long waitTime = AWaitForDisconnected;
@@ -193,12 +221,13 @@ bool SipCall::destroyCall(unsigned long AWaitForDisconnected)
 
 		if (isActive())
 		{
-			PJ_LOG(4,(__FILE__,"Waiting for call disconnection, remoteUri=%s, acc=%d, call=%d",FRemoteUri.toLocal8Bit().constData(),FAccIndex,FCallIndex));
+			LOG_DEBUG(QString("Waiting for SIP call disconnection, call=%1, uri=%2").arg(FCallIndex).arg(FRemoteUri));
 			FDelayedDestroy = true;
 			return false;
 		}
 	}
 
+	LOG_INFO(QString("Destroying SIP call, call=%1, uri=%2").arg(FCallIndex).arg(FRemoteUri));
 	int delayDestroy = qMax(FDestroyWaitTime-QDateTime::currentMSecsSinceEpoch(),(qint64)0);
 	QTimer::singleShot(delayDestroy,this,SLOT(deleteLater()));
 
@@ -402,8 +431,6 @@ bool SipCall::setMediaStreamProperty(int AMediaIndex, ISipMedia::Direction ADir,
 			pj_dir = PJMEDIA_DIR_NONE;
 		}
 
-		PJ_LOG(4,(__FILE__,"Changing Stream Property: call=%d, media=%d, dir=%d, property=%d, value=%s",FCallIndex,AMediaIndex,pj_dir,AProperty,AValue.toString().toLocal8Bit().constData()));
-
 		if (ci.media[AMediaIndex].type == PJMEDIA_TYPE_AUDIO)
 		{
 			switch (AProperty)
@@ -425,6 +452,12 @@ bool SipCall::setMediaStreamProperty(int AMediaIndex, ISipMedia::Direction ADir,
 						else
 							status = pjsua_conf_disconnect(ci.media[AMediaIndex].stream.aud.conf_slot,0);
 					}
+
+					if (status == PJ_SUCCESS)
+						LOG_DEBUG(QString("SIP media stream property changed, call=%1, media=%2, dir=%3, property=%4, value=%5").arg(FCallIndex).arg(AMediaIndex).arg(pj_dir).arg(AProperty).arg(AValue.toString()));
+					else
+						LOG_ERROR(QString("Failed to change SIP media stream property, call=%1, media=%2, dir=%3, property=%4, value=%5: %6").arg(FCallIndex).arg(AMediaIndex).arg(pj_dir).arg(AProperty).arg(AValue.toString()).arg(resolveSipError(status)));
+
 					emit mediaChanged();
 					return status == PJ_SUCCESS;
 				}
@@ -446,31 +479,49 @@ bool SipCall::setMediaStreamProperty(int AMediaIndex, ISipMedia::Direction ADir,
 							FStreamProperties[AMediaIndex][ISipMedia::Playback][ISipMediaStream::Volume] = AValue;
 					}
 
+					if (status_cap==PJ_SUCCESS && status_play==PJ_SUCCESS)
+						LOG_DEBUG(QString("SIP media stream property changed, call=%1, media=%2, dir=%3, property=%4, value=%5").arg(FCallIndex).arg(AMediaIndex).arg(pj_dir).arg(AProperty).arg(AValue.toString()));
+					else
+						LOG_ERROR(QString("Failed to change SIP media stream property, call=%1, media=%2, dir=%3, property=%4, value=%5: %6").arg(FCallIndex).arg(AMediaIndex).arg(pj_dir).arg(AProperty).arg(AValue.toString()).arg(resolveSipError(status_play==PJ_SUCCESS ? status_cap : status_play)));
+
 					emit mediaChanged();
 					return status_cap==PJ_SUCCESS && status_play==PJ_SUCCESS;
 				}
 			default:
+				LOG_ERROR(QString("Failed to change SIP media stream property, call=%1, media=%2, dir=%3, property=%4, value=%5: Unsupported audio property").arg(FCallIndex).arg(AMediaIndex).arg(pj_dir).arg(AProperty).arg(AValue.toString()));
 				break;
 			}
 		}
 		else if (ci.media[AMediaIndex].type == PJMEDIA_TYPE_VIDEO)
 		{
-			pjsua_call_vid_strm_op_param param;
-			pjsua_call_vid_strm_op_param_default(&param);
-
 			switch (AProperty)
 			{
 			case ISipMediaStream::Enabled:
 				{
+					pjsua_call_vid_strm_op_param param;
+					pjsua_call_vid_strm_op_param_default(&param);
+
 					param.med_idx = AMediaIndex;
 					if (AValue.toBool())
 						param.dir = (pjmedia_dir)(ci.media[AMediaIndex].dir | pj_dir);
 					else
 						param.dir = (pjmedia_dir)(ci.media[AMediaIndex].dir & ~pj_dir);
-					return pjsua_call_set_vid_strm(FCallIndex,PJSUA_CALL_VID_STRM_CHANGE_DIR,&param) == PJ_SUCCESS;
+
+					pj_status_t status = pjsua_call_set_vid_strm(FCallIndex,PJSUA_CALL_VID_STRM_CHANGE_DIR,&param);
+
+					if (status == PJ_SUCCESS)
+						LOG_DEBUG(QString("SIP media stream property changed, call=%1, media=%2, dir=%3, property=%4, value=%5").arg(FCallIndex).arg(AMediaIndex).arg(pj_dir).arg(AProperty).arg(AValue.toString()));
+					else
+						LOG_ERROR(QString("Failed to change SIP media stream property, call=%1, media=%2, dir=%3, property=%4, value=%5: %6").arg(FCallIndex).arg(AMediaIndex).arg(pj_dir).arg(AProperty).arg(AValue.toString()).arg(resolveSipError(status)));
+
+					emit mediaChanged();
+					return status == PJ_SUCCESS;
 				}
 			case ISipMediaStream::Volume:
 				{
+					pjsua_call_vid_strm_op_param param;
+					pjsua_call_vid_strm_op_param_default(&param);
+
 					param.med_idx = AMediaIndex;
 					param.dir = pj_dir;
 
@@ -486,15 +537,29 @@ bool SipCall::setMediaStreamProperty(int AMediaIndex, ISipMedia::Direction ADir,
 							FStreamProperties[AMediaIndex][ISipMedia::Capture][ISipMediaStream::Volume] = AValue;
 						if ((ADir & ISipMedia::Playback) > 0)
 							FStreamProperties[AMediaIndex][ISipMedia::Playback][ISipMediaStream::Volume] = AValue;
+						LOG_DEBUG(QString("SIP media stream property changed, call=%1, media=%2, dir=%3, property=%4, value=%5").arg(FCallIndex).arg(AMediaIndex).arg(pj_dir).arg(AProperty).arg(AValue.toString()));
+					}
+					else
+					{
+						LOG_ERROR(QString("Failed to change SIP media stream property, call=%1, media=%2, dir=%3, property=%4, value=%5: %6").arg(FCallIndex).arg(AMediaIndex).arg(pj_dir).arg(AProperty).arg(AValue.toString()).arg(resolveSipError(status)));
 					}
 
 					emit mediaChanged();
 					return status == PJ_SUCCESS;
 				}
 			default:
+				LOG_ERROR(QString("Failed to change SIP media stream property, call=%1, media=%2, dir=%3, property=%4, value=%5: Unsupported video property").arg(FCallIndex).arg(AMediaIndex).arg(pj_dir).arg(AProperty).arg(AValue.toString()));
 				break;
 			}
 		}
+		else
+		{
+			LOG_ERROR(QString("Failed to change SIP media stream property, call=%1, media=%2, dir=%3, property=%4, value=%5: Invalid media type").arg(FCallIndex).arg(AMediaIndex).arg(pj_dir).arg(AProperty).arg(AValue.toString()));
+		}
+	}
+	else if (curValue!=AValue && isActive())
+	{
+		LOG_ERROR(QString("Failed to change SIP media stream property, call=%1, media=%2, property=%3, value=%4: Invalid media index").arg(FCallIndex).arg(AMediaIndex).arg(AProperty).arg(AValue.toString()));
 	}
 	return false;
 }
@@ -517,18 +582,30 @@ QWidget *SipCall::getVideoPlaybackWidget(int AMediaIndex, QWidget *AParent)
 					widget->setSurface((VideoSurface *)wi.hwnd.info.window);
 					connect(widget,SIGNAL(windowDestroyed()),SLOT(onVideoPlaybackWidgetDestroyed()));
 					FVideoPlaybackWidgets.insertMulti(AMediaIndex,widget);
-					PJ_LOG(4,(__FILE__,"Video playback widget created: callId=%d, media=%d",FCallIndex,AMediaIndex));
+					LOG_DEBUG(QString("SIP video playback widget created: call=%1, media=%2").arg(FCallIndex).arg(AMediaIndex));
 				}
 				else
 				{
-					PJ_LOG(1,(__FILE__,"Incompatible render device type: type=%d",wi.hwnd.type));
+					LOG_ERROR(QString("Failed to create SIP video playback widget, call=%1, media=%2: Incompatible render device type (%3)").arg(FCallIndex).arg(AMediaIndex).arg(wi.hwnd.type));
 				}
 			}
 			else
 			{
-				PJ_LOG(1,(__FILE__,"Failed to get video playback window info: callId=%d, media=%d",FCallIndex,AMediaIndex));
+				LOG_ERROR(QString("Failed to create SIP video playback widget, call=%1, media=%2: Media stream window info not found").arg(FCallIndex).arg(AMediaIndex));
 			}
 		}
+		else
+		{
+			LOG_ERROR(QString("Failed to create SIP video playback widget, call=%1, media=%2: Invalid media index").arg(FCallIndex).arg(AMediaIndex));
+		}
+	}
+	else if (stream.index!=AMediaIndex)
+	{
+		LOG_ERROR(QString("Failed to create SIP video playback widget, call=%1, media=%2: Media stream not found").arg(FCallIndex).arg(AMediaIndex));
+	}
+	else
+	{
+		LOG_ERROR(QString("Failed to create SIP video playback widget, call=%1, media=%2: Invalid media stream").arg(FCallIndex).arg(AMediaIndex));
 	}
 	return widget;
 }
@@ -543,30 +620,46 @@ void SipCall::initialize()
 	pjmedia_tonegen_create(FTonegenPool, 8000, 1, 160, 16, 0, &FTonegenPort);
 	pjsua_conf_add_port(FTonegenPool, FTonegenPort, &FTonegenSlot);
 	pjsua_conf_connect(FTonegenSlot,0);
-
-	if (role() == ISipCall::Caller)
-		PJ_LOG(4,(__FILE__,"Call created as caller, remoteUri=%s, acc=%d",FRemoteUri.toLocal8Bit().constData(),FAccIndex));
-	else
-		PJ_LOG(4,(__FILE__,"Call created as receiver, remoteUri=%s, acc=%d, call=%d",FRemoteUri.toLocal8Bit().constData(),FAccIndex,FCallIndex));
 }
 
 void SipCall::setState(State AState)
 {
 	if (FState < AState)
 	{
-		PJ_LOG(4,(__FILE__,"Call state changed, state=%d, remoteUri=%s, acc=%d, call=%d",AState,FRemoteUri.toLocal8Bit().constData(),FAccIndex,FCallIndex));
+		LOG_DEBUG(QString("Call state changed, state=%1, call=%2, uri=%3").arg(AState).arg(FCallIndex).arg(FRemoteUri));
+
 		FState = AState;
+
 		switch (AState)
 		{
+		case ISipCall::Connecting:
+			Logger::startTiming(STMP_SIPPHONE_CALL_NEGOTIATION,FRemoteUri);
+			break;
+		case ISipCall::Confirmed:
+			REPORT_TIMING(STMP_SIPPHONE_CALL_NEGOTIATION,Logger::finishTiming(STMP_SIPPHONE_CALL_NEGOTIATION,FRemoteUri));
+			Logger::startTiming(STMP_SIPPHONE_CALL_DURATION,FRemoteUri);
+			REPORT_EVENT(SEVP_SIPPHONE_CALL_SUCCESS,1);
+			break;
 		case Disconnected:
+			REPORT_TIMING(STMP_SIPPHONE_CALL_DURATION,Logger::finishTiming(STMP_SIPPHONE_CALL_DURATION,FRemoteUri));
+			Logger::finishTiming(STMP_SIPPHONE_CALL_NEGOTIATION,FRemoteUri);
+			break;
 		case Aborted:
-			FCallIndex = PJSUA_INVALID_ID;
-			if (FDelayedDestroy)
-				destroyCall(0);
+			Logger::finishTiming(STMP_SIPPHONE_CALL_NEGOTIATION,FRemoteUri);
+			Logger::finishTiming(STMP_SIPPHONE_CALL_DURATION,FRemoteUri);
+			REPORT_EVENT(SEVP_SIPPHONE_CALL_FAILURE,1);
 			break;
 		default:
 			break;
 		}
+
+		if (FState==Disconnected || FState==Aborted)
+		{
+			FCallIndex = PJSUA_INVALID_ID;
+			if (FDelayedDestroy)
+				destroyCall(0);
+		}
+
 		emit stateChanged();
 	}
 }
@@ -575,10 +668,7 @@ void SipCall::setError(pj_status_t AStatus)
 {
 	if (FState != Aborted)
 	{
-		char errMsg[PJ_ERR_MSG_SIZE];
-		pj_strerror(AStatus, errMsg, sizeof(errMsg));
-
-		setStatus(PJSIP_SC_INTERNAL_SERVER_ERROR,errMsg);
+		setStatus(PJSIP_SC_INTERNAL_SERVER_ERROR,resolveSipError(AStatus));
 		setState(Aborted);
 	}
 }
@@ -609,9 +699,16 @@ void SipCall::setStatus(quint32 ACode, const QString &AText)
 	{
 		FStatusCode = ACode;
 		FStatusText = AText;
-		PJ_LOG(4,(__FILE__,"Call status changed, code=%d, message=%s, remoteUri=%s, acc=%d, call=%d",FStatusCode,FStatusText.toLocal8Bit().constData(),FRemoteUri.toLocal8Bit().constData(),FAccIndex,FCallIndex));
+		LOG_DEBUG(QString("Call status changed, code=%1, message=%2, call=%3, uri=%4").arg(FStatusCode).arg(FStatusText).arg(FCallIndex).arg(FRemoteUri));
 		emit statusChanged();
 	}
+}
+
+QString SipCall::resolveSipError(int ACode) const
+{
+	char errmsg[PJ_ERR_MSG_SIZE];
+	pj_strerror(ACode, errmsg, sizeof(errmsg));
+	return QString(errmsg);
 }
 
 void SipCall::printCallDump(bool AWithMedia) const
@@ -662,7 +759,7 @@ void SipCall::printCallDump(bool AWithMedia) const
 			}
 		}
 
-		PJ_LOG(4,(__FILE__,"Call dump, acc=%d, call=%d\n%s",FAccIndex,FCallIndex,buf));
+		LOG_DEBUG(QString("Call dump, call=%1\n%2").arg(FCallIndex).arg(buf));
 	}
 }
 
@@ -771,7 +868,7 @@ void SipCall::processSipEvent(SipEvent *AEvent)
 		}
 		break;
 	default:
-		PJ_LOG(1,(__FILE__,"Unhandled SipEvent: type=%s",AEvent->type));
+		REPORT_ERROR(QString("Received unexpected SIP event, call=%1, uri=%2, type=%3").arg(FCallIndex).arg(FRemoteUri).arg(AEvent->type));
 		delete AEvent;
 	}
 }
@@ -783,7 +880,7 @@ void SipCall::onVideoPlaybackWidgetDestroyed()
 	{
 		int mediaIndex = FVideoPlaybackWidgets.key(widget);
 		FVideoPlaybackWidgets.remove(mediaIndex,widget);
-		PJ_LOG(4,(__FILE__,"Video playback widget destroyed: callId=%d, media=%d",FCallIndex,mediaIndex));
+		LOG_DEBUG(QString("Video playback widget destroyed: call=%1, uri=%2, media=%3").arg(FCallIndex).arg(FRemoteUri).arg(mediaIndex));
 	}
 }
 

@@ -4,6 +4,7 @@
 #include <definitions/version.h>
 #include <definitions/sipphone/optionvalues.h>
 #include <utils/options.h>
+#include <utils/logger.h>
 #include "renderdev.h"
 
 #define DEF_SIP_UDP_PORT              0
@@ -36,7 +37,7 @@ void SipPhone::pluginInfo(IPluginInfo *APluginInfo)
 	APluginInfo->description = tr("Allows to make voice and video calls over SIP protocol");
 	APluginInfo->version = "1.0";
 	APluginInfo->author = "Potapov S.A. aka Lion";
-	APluginInfo->homePage = "http://www.qip.ru";
+	APluginInfo->homePage = "http://www.vacuum-im.org";
 }
 
 bool SipPhone::initConnections(IPluginManager *APluginManager, int &AInitOrder)
@@ -98,10 +99,23 @@ ISipCall *SipPhone::newCall(const QUuid &AAccountId, const QString &ARemoteUri)
 	{
 		if (pjsua_verify_sip_url(ARemoteUri.toLocal8Bit().constData())==PJ_SUCCESS || pjsua_verify_url(ARemoteUri.toLocal8Bit().constData())==PJ_SUCCESS)
 		{
+			LOG_INFO(QString("SIP call created as caller, call=%1, accId=%2, uri=%3").arg(-1).arg(AAccountId.toString(),ARemoteUri));
 			SipCall *call = new SipCall(AAccountId,FAccounts.value(AAccountId),ARemoteUri,this);
 			appendCall(call);
 			return call;
 		}
+		else
+		{
+			LOG_ERROR(QString("Failed to create SIP call, accId=%1, uri=%2: Invalid SIP uri").arg(AAccountId.toString(),ARemoteUri));
+		}
+	}
+	else if (!FAccounts.contains(AAccountId))
+	{
+		REPORT_ERROR("Failed to create SIP call: Account not found");
+	}
+	else if (!isCallsAvailable())
+	{
+		REPORT_ERROR("Failed to create SIP call: Calls is not available");
 	}
 	return NULL;
 }
@@ -161,12 +175,12 @@ bool SipPhone::setAccountRegistered(const QUuid &AAccountId, bool ARegistered)
 		pj_status_t status = pjsua_acc_set_registration(FAccounts.value(AAccountId), ARegistered ? PJ_TRUE : PJ_FALSE);
 		if (status == PJ_SUCCESS)
 		{
-			PJ_LOG(4,(__FILE__,"Account registration request sent: id=%s, reg=%d",AAccountId.toString().toLocal8Bit().constData(),ARegistered));
+			LOG_INFO(QString("SIP account registration request sent, accId=%1, register=%2").arg(AAccountId.toString()).arg(ARegistered));
 			return true;
 		}
 		else
 		{
-			PJ_LOG(1,(__FILE__,"Failed to send account registration request: id=%s, err=%d-%s",AAccountId.toString().toLocal8Bit().constData(),status,resolveSipError(status).toLocal8Bit().constData()));
+			LOG_ERROR(QString("Failed to send SIP account registration request, accId=%1: %2").arg(AAccountId.toString()).arg(resolveSipError(status)));
 		}
 	}
 	return false;
@@ -183,16 +197,36 @@ bool SipPhone::insertAccount(const QUuid &AAccountId, const ISipAccountConfig &A
 			pj_status_t status = pjsua_acc_add(&accCfg, PJ_FALSE, &accIndex);
 			if (status == PJ_SUCCESS)
 			{
-				PJ_LOG(4,(__FILE__,"Account created: id=%s, accIndex=%d",AAccountId.toString().toLocal8Bit().constData(),accIndex));
+				LOG_INFO(QString("SIP account inserted, accId=%1, accIdx=%2").arg(AAccountId.toString()).arg(accIndex));
 				FAccounts.insert(AAccountId,accIndex);
 				emit accountInserted(AAccountId);
 				return true;
 			}
 			else
 			{
-				PJ_LOG(1,(__FILE__,"Failed to create account: id=%s, err=%d-%s",AAccountId.toString().toLocal8Bit().constData(),status,resolveSipError(status).toLocal8Bit().constData()));
+				LOG_ERROR(QString("Failed to create SIP account, accId=%1: %2").arg(AAccountId.toString()).arg(resolveSipError(status)));
 			}
 		}
+		else
+		{
+			LOG_ERROR(QString("Failed to create SIP account, accId=%1: Config not parsed").arg(AAccountId.toString()));
+		}
+	}
+	else if (!FSipStackInited)
+	{
+		LOG_ERROR(QString("Failed to create SIP account, accId=%1: SIP stack not initialized").arg(AAccountId.toString()));
+	}
+	else if (AAccountId.isNull())
+	{
+		LOG_ERROR(QString("Failed to create SIP account, accId=%1: Account Id is null").arg(AAccountId.toString()));
+	}
+	else if (FAccounts.contains(AAccountId))
+	{
+		LOG_ERROR(QString("Failed to create SIP account, accId=%1: Account Id already exists").arg(AAccountId.toString()));
+	}
+	else if (!isValidConfig(AConfig))
+	{
+		LOG_ERROR(QString("Failed to create SIP account, accId=%1: Invalid config").arg(AAccountId.toString()));
 	}
 	return false;
 }
@@ -208,15 +242,27 @@ bool SipPhone::updateAccount(const QUuid &AAccountId, const ISipAccountConfig &A
 			pj_status_t status = pjsua_acc_modify(accIndex, &accCfg);
 			if (status == PJ_SUCCESS)
 			{
-				PJ_LOG(4,(__FILE__,"Account changed: id=%s, accIndex=%d",AAccountId.toString().toLocal8Bit().constData(),accIndex));
+				LOG_INFO(QString("SIP account updated, accId=%1").arg(AAccountId.toString()));
 				emit accountChanged(AAccountId);
 				return true;
 			}
 			else
 			{
-				PJ_LOG(1,(__FILE__,"Failed to change account: id=%s, err=%d-%s",AAccountId.toString().toLocal8Bit().constData(),status,resolveSipError(status).toLocal8Bit().constData()));
+				LOG_ERROR(QString("Failed to update SIP account, accId=%1: %2").arg(AAccountId.toString()).arg(resolveSipError(status)));
 			}
 		}
+		else
+		{
+			LOG_ERROR(QString("Failed to update SIP account, accId=%1: Config not parsed").arg(AAccountId.toString()));
+		}
+	}
+	else if (!FAccounts.contains(AAccountId))
+	{
+		LOG_ERROR(QString("Failed to update SIP account, accId=%1: Account not found").arg(AAccountId.toString()));
+	}
+	else if (!isValidConfig(AConfig))
+	{
+		LOG_ERROR(QString("Failed to update SIP account, accId=%1: Invalid config").arg(AAccountId.toString()));
 	}
 	return false;
 }
@@ -225,12 +271,13 @@ void SipPhone::removeAccount(const QUuid &AAccountId)
 {
 	if (FAccounts.contains(AAccountId))
 	{
+		LOG_INFO(QString("Removing SIP account, accId=%1").arg(AAccountId.toString()));
+
 		qDeleteAll(findCallsByAccount(AAccountId));
 		setAccountRegistered(AAccountId,false);
 
-		PJ_LOG(4,(__FILE__,"Account destroyed: id=%s",AAccountId.toString().toLocal8Bit().constData()));
-		pjsua_acc_del(FAccounts.value(AAccountId));
-		FAccounts.remove(AAccountId);
+		pjsua_acc_del(FAccounts.take(AAccountId));
+
 		emit accountRemoved(AAccountId);
 	}
 }
@@ -245,7 +292,7 @@ bool SipPhone::updateAvailDevices()
 		pjmedia_aud_dev_info audDevInfo[64];
 		if (pjmedia_aud_dev_refresh()==PJ_SUCCESS && pjsua_enum_aud_devs(audDevInfo, &numAudDevices)==PJ_SUCCESS)
 		{
-			PJ_LOG(4,(__FILE__,"Found %d audio devices",numAudDevices));
+			LOG_DEBUG(QString("Found %1 SIP audio devices").arg(numAudDevices));
 			for (unsigned devIndex = 0; devIndex < numAudDevices; devIndex++)
 			{
 				ISipDevice device;
@@ -272,15 +319,20 @@ bool SipPhone::updateAvailDevices()
 						memcpy(fid_str,&format.id,4);
 					formats.append(fid_str);
 				}
-				PJ_LOG(4,(__FILE__,".dev_i %d: %s (driver=%s, in=%d, out=%d, fmt=%d) %s",devIndex,audDevInfo[devIndex].name,audDevInfo[devIndex].driver,audDevInfo[devIndex].input_count,audDevInfo[devIndex].output_count,device.formats.count(),formats.join(", ").toLocal8Bit().constData()));
+
+				LOG_DEBUG(QString("  dev_i %1: %2 (driver=%3, in=%4, out=%5, fmt=%6) %7").arg(devIndex).arg(QString::fromLocal8Bit(audDevInfo[devIndex].name),QString::fromLocal8Bit(audDevInfo[devIndex].driver)).arg(audDevInfo[devIndex].input_count).arg(audDevInfo[devIndex].output_count).arg(device.formats.count()).arg(formats.join(", ")));
 			}
+		}
+		else
+		{
+			LOG_ERROR("Failed to update SIP audio devices");
 		}
 
 		unsigned numVidDevices = 64;
 		pjmedia_vid_dev_info vidDevInfo[64];
 		if (pjmedia_vid_dev_refresh()==PJ_SUCCESS && pjsua_vid_enum_devs(vidDevInfo, &numVidDevices)==PJ_SUCCESS)
 		{
-			PJ_LOG(4,(__FILE__,"Found %d video devices",numVidDevices));
+			LOG_DEBUG(QString("Found %1 SIP video devices").arg(numVidDevices));
 			for (unsigned devIndex = 0; devIndex < numVidDevices; devIndex++)
 			{
 				ISipDevice device;
@@ -310,8 +362,13 @@ bool SipPhone::updateAvailDevices()
 						memcpy(fid_str,&format.id,4);
 					formats.append(fid_str);
 				}
-				PJ_LOG(4,(__FILE__,".dev_i %d: %s (driver=%s, dir=%x, fmt=%d) %s",devIndex,vidDevInfo[devIndex].name,vidDevInfo[devIndex].driver,vidDevInfo[devIndex].dir,device.formats.count(),formats.join(", ").toLocal8Bit().constData()));
+
+				LOG_DEBUG(QString("  .dev_i %1: %2 (driver=%3, dir=%4, fmt=%5) %6").arg(devIndex).arg(QString::fromLocal8Bit(vidDevInfo[devIndex].name),QString::fromLocal8Bit(vidDevInfo[devIndex].driver)).arg(vidDevInfo[devIndex].dir).arg(device.formats.count()).arg(formats.join(", ")));
 			}
+		}
+		else
+		{
+			LOG_ERROR("Failed to update SIP video devices");
 		}
 
 		if (FAvailDevices != devices)
@@ -320,6 +377,18 @@ bool SipPhone::updateAvailDevices()
 			emit availDevicesChanged();
 			return true;
 		}
+	}
+	else if (!FSipStackInited)
+	{
+		LOG_ERROR("Failed to update avail SIP devices: SIP stack not initialize");
+	}
+	else if (pjsua_call_get_count() > 0)
+	{
+		LOG_ERROR("Failed to update avail SIP devices: Active calls found");
+	}
+	else if (FVideoPreviewWidgets.isEmpty())
+	{
+		LOG_ERROR("Failed to update avail SIP devices: Active preview widgets found");
 	}
 	return false;
 }
@@ -369,11 +438,16 @@ QWidget *SipPhone::startVideoPreview(const ISipDevice &ADevice, QWidget *AParent
 	VideoWindow *widget = NULL;
 	if (ADevice.index>=0 && ADevice.type==ISipMedia::Video && (ADevice.dir & ISipMedia::Capture)>0 && FAvailDevices.values(ADevice.type).contains(ADevice))
 	{
+		LOG_DEBUG(QString("Starting SIP video preview, devIdx=%1, devName=%2").arg(ADevice.index).arg(ADevice.name));
+
 		VideoSurface *surface = NULL;
 		if (!FVideoPreviewWidgets.contains(ADevice.index))
 		{
 			SipTaskStartPreview *task = new SipTaskStartPreview(ADevice.index,defaultDevice(ISipMedia::Video,ISipMedia::Playback).index);
-			FSipWorker->startTask(task);
+			if (FSipWorker->startTask(task))
+				LOG_DEBUG(QString("SIP video preview start task started, devIdx=%1, devName=%2").arg(ADevice.index).arg(ADevice.name));
+			else
+				LOG_ERROR(QString("Failed to start SIP video preview start task, devIdx=%1, devName=%2").arg(ADevice.index).arg(ADevice.name));
 		}
 		else
 		{
@@ -385,6 +459,10 @@ QWidget *SipPhone::startVideoPreview(const ISipDevice &ADevice, QWidget *AParent
 		connect(widget,SIGNAL(windowDestroyed()),SLOT(onVideoPreviewWidgetDestroyed()));
 		FVideoPreviewWidgets.insertMulti(ADevice.index,widget);
 	}
+	else
+	{
+		LOG_ERROR(QString("Failed to start SIP video preview, devIdx=%1, devName=%2: Invalid device").arg(ADevice.index).arg(ADevice.name));
+	}
 	return widget;
 }
 
@@ -394,12 +472,21 @@ void SipPhone::stopVideoPreview(QWidget *APreview)
 	int devIndex = FVideoPreviewWidgets.key(widget,PJSUA_INVALID_ID);
 	if (devIndex != PJSUA_INVALID_ID)
 	{
+		LOG_DEBUG(QString("Stopping SIP video preview, devIdx=%1").arg(devIndex));
+
 		FVideoPreviewWidgets.remove(devIndex,widget);
 		if (!FVideoPreviewWidgets.contains(devIndex))
 		{
 			SipTaskStopPreview *task = new SipTaskStopPreview(devIndex);
-			FSipWorker->startTask(task);
+			if (FSipWorker->startTask(task))
+				LOG_DEBUG(QString("SIP video preview stop task started, devIdx=%1").arg(devIndex));
+			else
+				LOG_ERROR(QString("Failed to start SIP video preview stop task, devIdx=%1").arg(devIndex));
 		}
+	}
+	else
+	{
+		LOG_WARNING("Failed to stop SIP video preview: Device not found");
 	}
 }
 
@@ -411,12 +498,19 @@ QMultiMap<int,ISipCallHandler *> SipPhone::callHandlers() const
 void SipPhone::insertCallHandler(int AOrder, ISipCallHandler *AHandler)
 {
 	if (AHandler && !FCallHandlers.contains(AOrder,AHandler))
+	{
+		LOG_DEBUG(QString("SIP call handler inserted, order=%1, handler=%2").arg(AOrder).arg((quint64)AHandler));
 		FCallHandlers.insertMulti(AOrder,AHandler);
+	}
 }
 
 void SipPhone::removeCallHandler(int AOrder, ISipCallHandler *AHandler)
 {
-	FCallHandlers.remove(AOrder,AHandler);
+	if (FCallHandlers.contains(AOrder,AHandler))
+	{
+		LOG_DEBUG(QString("SIP call handler removed, order=%1, handler=%2").arg(AOrder).arg((quint64)AHandler));
+		FCallHandlers.remove(AOrder,AHandler);
+	}
 }
 
 void SipPhone::initSipStack()
@@ -429,7 +523,7 @@ void SipPhone::initSipStack()
 		params.udpPort = Options::node(OPV_SIPPHONE_UPDPORT).value().toUInt();
 		params.tcpPort = Options::node(OPV_SIPPHONE_TCPPORT).value().toUInt();
 		params.userAgent = QString(CLIENT_NAME) + "/" + FPluginManager->version();
-		params.logFileName = QString(FPluginManager->homePath()+"/logs/pjsip.log");
+		//params.logFileName = QString(FPluginManager->homePath()+"/logs/pjsip.log");
 
 		pj_bzero(&params.callBack, sizeof(params.callBack));
 		params.callBack.on_reg_state = &pjcbOnRegState;
@@ -442,7 +536,10 @@ void SipPhone::initSipStack()
 		params.vdf = &qwidget_factory_create;
 
 		SipTaskCreateStack *task = new SipTaskCreateStack(params);
-		FSipWorker->startTask(task);
+		if (FSipWorker->startTask(task))
+			LOG_INFO(QString("Create SIP stack task started, stun='%1', ice=%2, udp=%3, tcp=%4, ua='%5'").arg(params.stun).arg(params.enableIce).arg(params.udpPort).arg(params.tcpPort).arg(params.userAgent));
+		else
+			LOG_ERROR("Failed to start create SIP stack task");
 	}
 }
 
@@ -478,6 +575,8 @@ void SipPhone::destroySipStack()
 {
 	if (FSipStackInited)
 	{
+		LOG_INFO("Destroing SIP stack");
+
 		foreach(const QString &sipid, FAccounts.keys())
 			removeAccount(sipid);
 
@@ -485,11 +584,14 @@ void SipPhone::destroySipStack()
 			delete widget;
 
 		SipTaskDestroyStack *task = new SipTaskDestroyStack;
-		FSipWorker->startTask(task);
+		if (FSipWorker->startTask(task))
+			LOG_DEBUG("Destroy SIP stack task started");
+		else
+			LOG_ERROR("Failed to start destroy SIP stack task");
 	}
 }
 
-QString SipPhone::resolveSipError(int ACode)
+QString SipPhone::resolveSipError(int ACode) const
 {
 	char errmsg[PJ_ERR_MSG_SIZE];
 	pj_strerror(ACode, errmsg, sizeof(errmsg));
@@ -700,13 +802,13 @@ void SipPhone::processSipEvent(SipEvent *AEvent)
 		{
 			SipEventRegState *se = static_cast<SipEventRegState *>(AEvent);
 
-			QString accId = FAccounts.key(se->accIndex);
-			if (!accId.isEmpty())
+			QUuid accId = FAccounts.key(se->accIndex);
+			if (!accId.isNull())
 			{
 				pjsua_acc_info ai;
 				pjsua_acc_get_info(se->accIndex,&ai);
 				bool registered = ai.expires>0;
-				PJ_LOG(4,(__FILE__,"Account registration changed: id=%s, status=%d-%s, expires=%d",accId.toLocal8Bit().constData(),ai.status,ai.status_text.ptr,ai.expires));
+				LOG_INFO(QString("SIP account registration changed, accId=%1, registered=%2, status=%3").arg(accId.toString()).arg(registered).arg(ai.status_text.ptr));
 				emit accountRegistrationChanged(accId,registered);
 			}
 
@@ -717,11 +819,12 @@ void SipPhone::processSipEvent(SipEvent *AEvent)
 		{
 			SipEventIncomingCall *se = static_cast<SipEventIncomingCall *>(AEvent);
 
-			QString accId = FAccounts.key(se->accIndex);
-			if (!accId.isEmpty())
+			QUuid accId = FAccounts.key(se->accIndex);
+			if (!accId.isNull())
 			{
 				if (!isDuplicateCall(se->callIndex))
 				{
+					LOG_INFO(QString("SIP call created as receiver, call=%1, accId=%2").arg(se->callIndex).arg(accId.toString()));
 					SipCall *call = new SipCall(accId,se->accIndex,se->callIndex,this);
 					appendCall(call);
 
@@ -731,18 +834,19 @@ void SipPhone::processSipEvent(SipEvent *AEvent)
 
 					if (!callReceived)
 					{
-						PJ_LOG(4,(__FILE__,"Destroying unhandled call, remoteUri=%s, accIndex=%d, callIndex=%d",call->remoteUri().toLocal8Bit().constData(),se->accIndex,se->callIndex));
+						LOG_WARNING(QString("Incoming call not accepted, call=%1, accId=%2, uri=%3").arg(call->callIndex()).arg(call->accountId().toString()).arg(call->remoteUri()));
 						call->hangupCall(ISipCall::SC_NotAcceptableHere);
 						call->destroyCall(0);
 					}
 				}
 				else
 				{
-					PJ_LOG(4,(__FILE__,"Ignoring duplicate incoming call: callIndex=%d",se->callIndex));
+					LOG_DEBUG(QString("Ignoring duplicate incoming call event: call=%1, accId=%2").arg(se->callIndex).arg(accId.toString()));
 				}
 			}
 			else
 			{
+				LOG_WARNING(QString("Received call from unknown account, call=%1, accId=%2").arg(se->accIndex).arg(accId.toString()));
 				pjsua_call_hangup(se->callIndex,PJSIP_SC_NOT_ACCEPTABLE_HERE,NULL,NULL);
 			}
 
@@ -750,7 +854,7 @@ void SipPhone::processSipEvent(SipEvent *AEvent)
 		}
 		break;
 	default:
-		PJ_LOG(1,(__FILE__,"Unhandled SipEvent: type=%s",AEvent->type));
+		REPORT_ERROR(QString("Received unexpected SIP event: type=%1").arg(AEvent->type));
 		delete AEvent;
 	}
 }
@@ -770,6 +874,7 @@ void SipPhone::onSipCallDestroyed()
 	SipCall *call = qobject_cast<SipCall *>(sender());
 	if (call)
 	{
+		LOG_INFO(QString("SIP call destroyed, call=%1, accId=%2, uri=%3").arg(call->callIndex()).arg(call->accountId().toString(),call->remoteUri()));
 		removeCall(call);
 		if (findCallsByAccount(call->accountId()).isEmpty())
 			setAccountRegistered(call->accountId(),false);
@@ -812,18 +917,19 @@ void SipPhone::onSipWorkerTaskFinished(SipTask *ATask)
 			SipTaskCreateStack *task = static_cast<SipTaskCreateStack *>(ATask);
 			if (task->status() == PJ_SUCCESS)
 			{
+				LOG_INFO("SIP stack initialized");
+
 				pj_thread_register("Qt GUI Thread",FPjThreadDesc,&FPjThread);
 				FSipStackInited = true;
 
 				loadSipParams();
 				updateAvailDevices();
 
-				PJ_LOG(4,(__FILE__,"Sip stack initialized"));
 				emit callsAvailChanged(true);
 			}
 			else
 			{
-				PJ_LOG(1,(__FILE__,"Failed to initialize SIP stack: err=%d-%s",task->status(),resolveSipError(task->status()).toLocal8Bit().constData()));
+				LOG_ERROR(QString("Failed to initialize SIP stack: %1").arg(resolveSipError(task->status())));
 			}
 		}
 		break;
@@ -837,9 +943,9 @@ void SipPhone::onSipWorkerTaskFinished(SipTask *ATask)
 			FSipStackInited = false;
 
 			if (task->status() == PJ_SUCCESS)
-				PJ_LOG(4,(__FILE__,"Sip stack destroyed"));
+				LOG_INFO("SIP stack destroyed");
 			else
-				PJ_LOG(1,(__FILE__,"Failed to destroy SIP stack: err=%d-%s",task->status(),resolveSipError(task->status()).toLocal8Bit().constData()));
+				LOG_ERROR(QString("Failed to destroy SIP stack: %1").arg(resolveSipError(task->status())));
 
 			emit callsAvailChanged(false);
 		}
@@ -854,16 +960,16 @@ void SipPhone::onSipWorkerTaskFinished(SipTask *ATask)
 					VideoSurface *surface = (VideoSurface *)task->window();
 					foreach(VideoWindow *widget, FVideoPreviewWidgets.values(task->captureDev()))
 						widget->setSurface(surface);
-					PJ_LOG(4,(__FILE__,"Video preview started, cap_dev=%d",task->captureDev()));
+					LOG_DEBUG(QString("SIP video preview started, capIdx=%1, renIdx=%2").arg(task->captureDev()).arg(task->renderDev()));
 				}
 				else
 				{
-					PJ_LOG(1,(__FILE__,"Incompatible render device type: cap_dev=%d, ren_dev=%d, type=%d",task->captureDev(),task->renderDev(),task->windowType()));
+					LOG_ERROR(QString("Failed to start SIP video preview, capIdx=%1, renIdx=%2, winType=%3: Incompatible render device type").arg(task->captureDev()).arg(task->renderDev()).arg(task->windowType()));
 				}
 			}
 			else
 			{
-				PJ_LOG(1,(__FILE__,"Failed to start video preview: cap_dev=%d, err=%d-%s",task->captureDev(),task->status(),resolveSipError(task->status()).toLocal8Bit().constData()));
+				LOG_ERROR(QString("Failed to start SIP video preview, capIdx=%1, renIdx=%2: %3").arg(task->captureDev()).arg(task->renderDev()).arg(resolveSipError(task->status())));
 			}
 		}
 		break;
@@ -875,12 +981,13 @@ void SipPhone::onSipWorkerTaskFinished(SipTask *ATask)
 				widget->setSurface(NULL);
 
 			if (task->status() == PJ_SUCCESS)
-				PJ_LOG(4,(__FILE__,"Video preview stopped, cap_dev=%d",task->captureDev()));
+				LOG_DEBUG(QString("SIP video preview stopped, capIdx=%1").arg(task->captureDev()));
 			else
-				PJ_LOG(1,(__FILE__,"Failed to stop video preview: cap_dev=%d, err=%d-%s",task->captureDev(),task->status(),resolveSipError(task->status()).toLocal8Bit().constData()));
+				LOG_ERROR(QString("Failed to stop video preview, capIdx=%1: %2").arg(task->captureDev()).arg(resolveSipError(task->status())));
 		}
 		break;
 	default:
+		REPORT_ERROR(QString("Unexpected SIP task finished, type=%1").arg(ATask->type()));
 		break;
 	}
 	delete ATask;
@@ -897,9 +1004,9 @@ void SipPhone::pjcbOnRegState(pjsua_acc_id AAccIndex)
 void SipPhone::pjcbOnNatDetect(const pj_stun_nat_detect_result *AResult)
 {
 	if (AResult->status == PJ_SUCCESS)
-		PJ_LOG(4, (__FILE__, "NAT detected as %s", AResult->nat_type_name));
+		LOG_INFO(QString("SIP NAT detected as %1").arg(AResult->nat_type_name));
 	else
-		pjsua_perror(__FILE__, "NAT detection failed", AResult->status);
+		LOG_ERROR(QString("Failed to detect NAT type: %1").arg(AResult->status));
 }
 
 void SipPhone::pjcbOnIncomingCall(pjsua_acc_id AAccIndex, pjsua_call_id ACallIndex, pjsip_rx_data *AData)

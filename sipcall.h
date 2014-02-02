@@ -53,6 +53,7 @@ protected:
 	void setError(pj_status_t AStatus);
 	bool isErrorStatus(pjsip_status_code ACode);
 	void setStatus(quint32 ACode, const QString &AText);
+	QString resolveSipError(int ACode) const;
 	void printCallDump(bool AWithMedia) const;
 	void updateVideoPlaybackWidgets(const QList<int> &AMediaIndexes);
 protected slots:
