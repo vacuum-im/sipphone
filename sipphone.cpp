@@ -5,6 +5,7 @@
 #include <definitions/sipphone/optionvalues.h>
 #include <utils/options.h>
 #include <utils/logger.h>
+#include <utils/jid.h>
 #include "renderdev.h"
 
 #define DEF_SIP_UDP_PORT              0
@@ -145,7 +146,10 @@ ISipAccountConfig SipPhone::accountConfig(const QUuid &AAccountId) const
 		pj_pool_t *tmp_pool = pjsua_pool_create("tmp-acc-pool", 1024, 1024);
 		if (pjsua_acc_get_config(FAccounts.value(AAccountId),tmp_pool,&accCfg)==PJ_SUCCESS && accCfg.cred_count>0)
 		{
-			config.userid = accCfg.cred_info[0].username.ptr;
+			config.userid = accCfg.id.ptr;
+			config.userid.chop(1);
+			config.userid.remove(0,5);
+
 			config.password = accCfg.cred_info[0].data.ptr;
 
 			if (accCfg.proxy_cnt > 0)
@@ -613,18 +617,20 @@ bool SipPhone::parseConfig(const ISipAccountConfig &ASrc, pjsua_acc_config &ADst
 	ADst.allow_via_rewrite = PJ_FALSE;
 	ADst.allow_contact_rewrite = PJ_FALSE;
 
+	Jid userId = ASrc.userid;
+	QString serverHost = ASrc.serverHost.isEmpty() ? userId.domain() : ASrc.serverHost;
+
 	static char id_url[1030];
 	pj_ansi_snprintf(id_url,sizeof(id_url),"<sip:%s>",ASrc.userid.toLocal8Bit().constData());
 
 	static char reguri[1030];
-	QString serverHost = ASrc.serverHost.isEmpty() ? ASrc.userid.mid(ASrc.userid.indexOf('@')+1) : ASrc.serverHost;
 	if (ASrc.serverPort > 0)
 		pj_ansi_snprintf(reguri,sizeof(reguri),"<sip:%s:%u>",serverHost.toLocal8Bit().constData(),ASrc.serverPort);
 	else
 		pj_ansi_snprintf(reguri,sizeof(reguri),"<sip:%s>",serverHost.toLocal8Bit().constData());
 
 	static char username[512];
-	pj_ansi_snprintf(username,sizeof(username),"%s",ASrc.userid.toLocal8Bit().constData());
+	pj_ansi_snprintf(username,sizeof(username),"%s",userId.node().toLocal8Bit().constData());
 
 	static char password[512];
 	pj_ansi_snprintf(password,sizeof(password),"%s",ASrc.password.toLocal8Bit().constData());
