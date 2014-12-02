@@ -399,7 +399,7 @@ bool SipPhone::updateAvailDevices()
 
 ISipDevice SipPhone::findDevice(ISipMedia::Type AType, int AIndex) const
 {
-	for (QMap<int,ISipDevice>::const_iterator it=FAvailDevices.constBegin(); it!=FAvailDevices.constEnd(); it++)
+	for (QMap<int,ISipDevice>::const_iterator it=FAvailDevices.constBegin(); it!=FAvailDevices.constEnd(); ++it)
 		if (it.key()==AType && it->index==AIndex)
 			return it.value();
 	return ISipDevice();
@@ -407,7 +407,7 @@ ISipDevice SipPhone::findDevice(ISipMedia::Type AType, int AIndex) const
 
 ISipDevice SipPhone::findDevice(ISipMedia::Type AType, const QString &AName) const
 {
-	for (QMap<int,ISipDevice>::const_iterator it=FAvailDevices.constBegin(); it!=FAvailDevices.constEnd(); it++)
+	for (QMap<int,ISipDevice>::const_iterator it=FAvailDevices.constBegin(); it!=FAvailDevices.constEnd(); ++it)
 		if (it.key()==AType && it->name==AName)
 			return it.value();
 	return ISipDevice();
