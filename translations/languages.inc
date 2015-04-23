@@ -1,6 +1,10 @@
-TRANS_LANGS  = ru
+# Translation file name
 TRANS_TARGET = $$member(TARGET,0)
-TRANSLATIONS = \
-               $${TRANS_SOURCE_ROOT}/translations/en/$${TRANS_TARGET}.ts \
-               $${TRANS_SOURCE_ROOT}/translations/ru/$${TRANS_TARGET}.ts
+
+# Translations to build and install
+TRANS_LANGS  = ru pl de uk es
+
+# Translations to update from source
+TRANSLATIONS += $${TRANS_SOURCE_ROOT}/translations/ru/$${TRANS_TARGET}.ts
+
 include(../qmake/translations.inc)
