@@ -551,7 +551,7 @@ void SipPhone::loadSipParams()
 {
 	if (FSipStackInited)
 	{
-		const pj_str_t h264Id = {"H264", 4};
+		const pj_str_t h264Id = pj_str((char *)"H264");
 		pjmedia_vid_codec_param h264Params;
 		pjsua_vid_codec_get_param(&h264Id, &h264Params);
 		h264Params.enc_fmt.det.vid.size.w = 640;
@@ -562,7 +562,7 @@ void SipPhone::loadSipParams()
 		h264Params.enc_fmt.det.vid.max_bps = 512000;
 		pjsua_vid_codec_set_param(&h264Id, &h264Params);
 
-		const pj_str_t h263Id = {"H263", 4};
+		const pj_str_t h263Id = pj_str((char *)"H263");
 		pjmedia_vid_codec_param h263Params;
 		pjsua_vid_codec_get_param(&h263Id, &h263Params);
 		h263Params.enc_fmt.det.vid.size.w = 640;
@@ -644,8 +644,8 @@ bool SipPhone::parseConfig(const ISipAccountConfig &ASrc, pjsua_acc_config &ADst
 	ADst.vid_rend_dev = defaultDevice(ISipMedia::Video,ISipMedia::Playback).index;
 
 	ADst.cred_count = 1;
-	ADst.cred_info[0].realm = pj_str((char*)"*");
-	ADst.cred_info[0].scheme = pj_str((char*)"digest");
+	ADst.cred_info[0].realm = pj_str((char *)"*");
+	ADst.cred_info[0].scheme = pj_str((char *)"digest");
 	ADst.cred_info[0].username = pj_str(username);
 	ADst.cred_info[0].data = pj_str(password);
 	ADst.cred_info[0].data_type = PJSIP_CRED_DATA_PLAIN_PASSWD;

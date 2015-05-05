@@ -57,7 +57,7 @@ void SipTaskCreateStack::run()
 		}
 
 		QByteArray userAgent = FParams.userAgent.toLocal8Bit();
-		uc.user_agent = pj_str((char *)userAgent.constData());
+		uc.user_agent = pj_str(userAgent.data());
 
 		uc.cb = FParams.callBack;
 
@@ -65,7 +65,7 @@ void SipTaskCreateStack::run()
 		pjsua_logging_config lc;
 		pjsua_logging_config_default(&lc);
 		QByteArray logFileName = FParams.logFileName.toLocal8Bit();
-		lc.log_filename = pj_str((char *)logFileName.constData());
+		lc.log_filename = pj_str(logFileName.data());
 		lc.msg_logging = PJ_TRUE;
 
 		// PJSUA Media Configuration

@@ -215,7 +215,7 @@ bool SipCall::destroyCall(unsigned long AWaitForDisconnected)
 			FEventWait.wait(&FDestroyLock,qMin(waitTime,1000UL));
 			FDestroyLock.unlock();
 
-			qint64 passedMsecs = startTime.msecsTo(QDateTime::currentDateTime());
+			unsigned long passedMsecs = startTime.msecsTo(QDateTime::currentDateTime());
 			waitTime = AWaitForDisconnected>passedMsecs ? AWaitForDisconnected-passedMsecs : 0;
 		}
 
@@ -846,7 +846,7 @@ void SipCall::processSipEvent(SipEvent *AEvent)
 				{
 					if (isActive())
 					{
-						pj_str_t reason = pj_str("ICE negotiation failed");
+						pj_str_t reason = pj_str((char *)"ICE negotiation failed");
 						pjsua_call_hangup(FCallIndex,PJSIP_SC_INTERNAL_SERVER_ERROR,&reason,NULL);
 					}
 				}

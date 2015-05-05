@@ -22,7 +22,7 @@ struct qwidget_format
 	QImage::Format           qt_fmt;
 };
 
-static struct qwidget_format qwidget_formats[] = {
+static const struct qwidget_format qwidget_formats[] = {
 	{ PJMEDIA_FORMAT_BGRA,  QImage::Format_ARGB32 }
 };
 
@@ -30,7 +30,7 @@ static QImage::Format get_qimage_format(pj_uint32_t pj_fmt)
 {
 	int count = PJ_ARRAY_SIZE(qwidget_formats);
 	for (int i=0; i<count; i++)
-		if (qwidget_formats[i].pj_fmt = pj_fmt)
+		if (qwidget_formats[i].pj_fmt == pj_fmt)
 			return qwidget_formats[i].qt_fmt;
 	return QImage::Format_Invalid;
 }
